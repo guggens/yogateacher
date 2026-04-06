@@ -40,9 +40,17 @@ class YogaTeacherRunner(
             println("ℹ️  Spotify nicht konfiguriert (SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET fehlen)")
         }
 
+        val commandLine = args.filterNotNull().joinToString(" ").trim()
+        if (commandLine.isNotEmpty()) {
+            // Non-interactive: run the single command and exit
+            dispatch(commandLine)
+            println("Namasté 🙏")
+            return
+        }
+
         println("\nBefehle:")
         println("  lesson <minuten> [fokus]  — Stunde generieren, speichern und abspielen")
-        println("  play <datei>              — Gespeicherte Stunde abspielen (z.B. 'play lessons/2026-04-06_10-00-00.md')")
+        println("  play <datei>              — Gespeicherte Stunde abspielen (z.B. 'play lessons/2026-04-06_10-00-00.json')")
         println("  test <minuten> [fokus]    — Nur Text ausgeben, nicht abspielen")
         println("  quit                      — Beenden\n")
 
@@ -51,15 +59,22 @@ class YogaTeacherRunner(
             val line = readLine()?.trim() ?: break
             when {
                 line.equals("quit", ignoreCase = true) || line.equals("exit", ignoreCase = true) -> break
-                line.startsWith("test", ignoreCase = true) -> runLesson(line.removePrefix("test").trim(), textOnly = true)
-                line.startsWith("play", ignoreCase = true) -> playFromFile(line.removePrefix("play").trim())
-                line.startsWith("lesson", ignoreCase = true) -> runLesson(line.removePrefix("lesson").trim())
                 line.isEmpty() -> continue
-                else -> speakInstruction(line)
+                else -> dispatch(line)
             }
         }
 
         println("Namasté 🙏")
+    }
+
+    private fun dispatch(line: String) {
+        val lower = line.lowercase()
+        when {
+            lower.startsWith("test") -> runLesson(line.drop(4).trim(), textOnly = true)
+            lower.startsWith("play") -> playFromFile(line.drop(4).trim())
+            lower.startsWith("lesson") -> runLesson(line.drop(6).trim())
+            else -> speakInstruction(line)
+        }
     }
 
     private fun runLesson(args: String, textOnly: Boolean = false) {
@@ -82,7 +97,7 @@ class YogaTeacherRunner(
     private fun playFromFile(filename: String) {
         val file = if (filename.isEmpty()) {
             // Pick the most recent lesson if no filename given
-            File("lessons").listFiles { f -> f.extension == "md" }
+            File("lessons").listFiles { f -> f.extension == "json" }
                 ?.maxByOrNull { it.lastModified() }
                 ?: run { System.err.println("Keine Stunden im Ordner 'lessons' gefunden."); return }
         } else {
@@ -103,12 +118,18 @@ class YogaTeacherRunner(
         val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"))
         val focusPart = focusArea?.trim()?.replace("\\s+".toRegex(), "-") ?: ""
         val name = listOfNotNull(timestamp, "${minutes}min", focusPart.ifEmpty { null }).joinToString("_")
-        val file = File(dir, "$name.md")
+        val file = File(dir, "$name.json")
         file.writeText(lessonGenerator.toJson(lesson))
         return file.path
     }
 
     private fun playOrPrintLesson(lesson: YogaLesson, textOnly: Boolean) {
+        if (!textOnly) {
+            speakInstruction(lesson.title)
+            speakInstruction(lesson.theme)
+            speakInstruction("${lesson.duration_minutes} Minuten")
+        }
+
         val cache: Map<String, String> = if (!textOnly && spotifyPlayer != null) {
             val phases = lesson.segments.map { it.phase }.toSet()
             println("Lade Playlists für ${phases.size} Phasen vor...")
@@ -133,8 +154,22 @@ class YogaTeacherRunner(
     }
 
     private fun playSegment(segment: LessonSegment, previousPhase: String?, cache: Map<String, String>) {
-        // 1. Switch playlist if phase changed (before transition — music changes while practitioner moves)
-        if (segment.phase != previousPhase && spotifyPlayer != null && cache.isNotEmpty()) {
+        val phaseChanged = segment.phase != previousPhase && spotifyPlayer != null && cache.isNotEmpty()
+
+        // 1. Capture current volume and duck before playlist switch
+        var previousVolume: Int? = null
+        if (phaseChanged) {
+            previousVolume = spotifyPlayer!!.getCurrentVolume()
+            spotifyPlayer!!.setVolume(30)
+        }
+
+        // 2. First half of transition — current music continues (ducked) while moving
+        if (segment.transition_seconds > 0) {
+            Thread.sleep(segment.transition_seconds * 500L)
+        }
+
+        // 3. Switch playlist mid-transition
+        if (phaseChanged) {
             try {
                 spotifyPlayer!!.switchToPhase(segment.phase, cache)
             } catch (e: Exception) {
@@ -142,20 +177,25 @@ class YogaTeacherRunner(
             }
         }
 
-        // 2. Transition pause — time to physically move into position
+        // 4. Second half of transition — new music plays while settling into position
         if (segment.transition_seconds > 0) {
-            Thread.sleep(segment.transition_seconds * 1000L)
+            Thread.sleep(segment.transition_seconds * 500L)
         }
 
-        // 3. Main instruction
+        // 5. Restore volume
+        if (phaseChanged && previousVolume != null) {
+            spotifyPlayer!!.setVolume(previousVolume)
+        }
+
+        // 6. Main instruction
         speakInstruction(segment.instruction)
 
-        // 4. Modification for difficult poses
+        // 7. Modification for difficult poses
         if (segment.modification.isNotBlank()) {
             speakInstruction(segment.modification)
         }
 
-        // 5. Coaching cues evenly spaced during hold, or silent hold if no cues
+        // 8. Coaching cues evenly spaced during hold, or silent hold if no cues
         if (segment.hold_seconds > 0) {
             if (segment.cues.isNotEmpty()) {
                 val intervalMs = (segment.hold_seconds * 1000L) / (segment.cues.size + 1)
@@ -163,7 +203,6 @@ class YogaTeacherRunner(
                     Thread.sleep(intervalMs)
                     speakInstruction(cue)
                 }
-                // Remaining silence after last cue
                 Thread.sleep(intervalMs)
             } else {
                 Thread.sleep(segment.hold_seconds * 1000L)

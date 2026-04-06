@@ -35,21 +35,30 @@ class LessonGeneratorService(chatClientBuilder: ChatClient.Builder) {
 
     fun generate(durationMinutes: Int, focusArea: String? = null): YogaLesson {
         val systemPrompt = """
-            Du bist ein erfahrener Yoga-Lehrer. Du sprichst deine Schülerinnen und Schüler auf Deutsch an.
-            Du hast tiefes Wissen über Yoga-Poses, Flows, Philosophie, Anatomie, Pranayama und Meditation.
-            
+            Du bist ein erfahrener Vinyasa Yoga-Lehrer. Du sprichst deine Schülerinnen und Schüler auf Deutsch an.
+            Du hast tiefes Wissen über Yoga-Poses, Vinyasa Flows, Philosophie, Anatomie, Pranayama und Meditation.
+
+            DEIN STIL: Du leitest fließende, zusammenhängende Yoga-Stunden, die sich sanft anfühlen — minimal Stop-and-Go, maximal FLUSS.
+
             Hier ist deine gesamte Wissensbasis:
-            
+
             $knowledgeBase
-            
+
             Antworte AUSSCHLIESSLICH mit einem gültigen JSON-Objekt — kein erklärender Text davor oder danach.
             Beachte die Sequenzierungsregeln aus flows.md (Opening → Warm-Up → Building → Peak → Cool-Down → Restorative → Savasana).
-            ${focusArea?.let { "Der Schwerpunkt dieser Stunde liegt auf: $it. Wähle Posen und Flows, die besonders diesen Bereich ansprechen." } ?: ""}
+            ${focusArea?.let { "Der Schwerpunkt dieser Stunde liegt auf: $it. Wähle Posen und Flows, die besonders diesen Bereich ansprechen und sanft mit den anderen zusammenhängen." } ?: ""}
         """.trimIndent()
 
         val userPrompt = """
-            Erstelle eine vollständige ${durationMinutes}-minütige Yoga-Stunde auf Deutsch.${focusArea?.let { "\n            Schwerpunkt: $it." } ?: ""}
-            
+            Erstelle eine vollständige ${durationMinutes}-minütige Yoga-Stunde auf Deutsch mit SMOOTH VINYASA FLOWS. Die Stunde soll sanft fließen — minimale abrupte Bewegungen zwischen Posen.${focusArea?.let { "\n            Schwerpunkt: $it." } ?: ""}
+
+            FLOW-PRINZIPIEN:
+            - Nutze Sun Salutations (Surya Namaskar) und Vinyasa-Sequenzen für fließende Bewegungsabläufe
+            - Verbinde verwandte Posen: z.B. von Downward Dog → Low Lunge → Warrior I → Warrior II statt isolierter Posen
+            - Minimiere Übergänge: Poses sollten natürlich ineinander fließen (transition_seconds 0-3s wenn möglich)
+            - Peak Phase sollte aus einer Kette von zusammenhängenden Flows bestehen, nicht einzelnen Holds
+            - Cool-Down Phase: Fließende Sequenzen (kein Stop-and-Go), dann zu Restorative Yin Posen
+
             Antworte mit einem JSON-Objekt in exakt diesem Format:
             {
               "title": "...",
@@ -66,15 +75,39 @@ class LessonGeneratorService(chatClientBuilder: ChatClient.Builder) {
                 }
               ]
             }
-            
+
             Wichtig:
             - Alle Texte auf Deutsch — ruhig, warm, einladend
-            - "instruction": Detailliert! Beschreibe Schritt für Schritt, wie man in die Pose kommt. Nicht nur den Namen nennen, sondern anleiten. 3-5 Sätze.
-            - "modification": Für anspruchsvolle Posen eine leichtere Variante anbieten ("Oder, wenn das zu intensiv ist: ..."). Bei einfachen Posen (Savasana, Sitzen, Katze/Kuh) leer lassen.
-            - "hold_seconds": Reine Haltezeit NACH dem Sprechen der Anweisung. Bedenke: Jeder Satz braucht ca. 3-4 Sekunden zum Sprechen.
-            - "transition_seconds": Stille Übergangszeit VOR der Anweisung — Zeit um physisch die Position zu wechseln. 3-5s bei kleinen Wechseln, 8-15s bei großen Wechseln (z.B. Stehen→Boden).
-            - "cues": 1-3 kurze Coaching-Hinweise (je 1 Satz), die gleichmäßig verteilt während der Haltezeit gesprochen werden. Enthalten: Ausrichtungshinweise ("Knie über dem Knöchel"), Atemhinweise ("Atme tief in die Dehnung"), Motivation ("Du bist stärker als du denkst"). Bei Savasana/Meditation: cues leer lassen — respektiere die Stille.
+            - "instruction": Schritt-für-Schritt Eintritt in die Pose/Flow. 3-4 Sätze. Nenne die Pose mit BEIDEN Namen (englisch/Sanskrit + deutsch).
+              * Beispiel für statische Pose: "Komme in Downward Dog — den herabschauenden Hund. Platziere deine Hände schulterbreit auseinander. Drücke deine Hüften zum Himmel."
+              * Beispiel für Flow-Sequenz: "Vinyasa Flow: Aus Downward Dog — dem herabschauenden Hund — schreite in Plank — die Bretter. Dann auf Low Lunge und öffne dich nach rechts zu Warrior II — dem Krieger 2."
+              * Für bilaterale Posen: "Halte die rechte Seite. Nach der Hälfte wechselst du zur linken Seite."
+              * Für Wiederholungen/Flows: "Wiederhole diese Bewegung 5-mal" oder "Fließe sanft durch diese Sequenz mehrmals"
+              * KEINE Release-Instruktionen hier — nur Entry!
+            - "modification": Für anspruchsvolle Posen eine leichtere Variante anbieten. Bei einfachen Posen leer lassen.
+            - "hold_seconds": Haltezeit NACH dem Sprechen. Bei Flows/Wiederholungen: Zeit für vollständige Sequenz. Bedenke: Jeder Satz = 3-4 Sekunden zum Sprechen.
+            - "transition_seconds": Übergangszeit VOR der Anweisung. Bei nahtlosen Übergängen (z.B. Lunge→Warrior): 0-2s. Nur 3-5s für minimale Position-Wechsel. 8-15s NUR für große Wechsel (Stehen→Boden).
+            - "cues": Anzahl hängt von der Länge (hold_seconds) ab. LETZTER cue ist IMMER die nächste Bewegung/Release-Instruktion für nahtlose Flows.
+              * hold_seconds < 15: NUR 1 cue = Nächste Bewegung am Ende ("Fließe in...")
+              * hold_seconds 15-30: 2 cues = 1 Coaching + nächste Bewegung
+              * hold_seconds 30-45: 2-3 cues = 1-2 Coaching + nächste Bewegung
+              * hold_seconds > 45: 3 cues = 2 Coaching + nächste Bewegung
+              * Beispiel für 30s bilaterale Pose (2 cues):
+                - cue[0] ~12s: "Rechte Seite stabil, wechsel die Seite"
+                - cue[1] ~23s: "Fließe sanft in [nächste Pose — keine Zeit verschwenden]"
+              * Beispiel für Vinyasa 40s (3 cues):
+                - cue[0] ~12s: "Fließe mit deinem Atem"
+                - cue[1] ~25s: "Kraft in der Mitte aufbauen"
+                - cue[2] ~35s: "Komme nun zu [nächster Flow]"
+              * Release/nächste Bewegung MUSS am Ende sein — direkt zur nächsten Pose übergehen!
+              * Flow-Cues: "Fließe...", "Schreite...", "Rolle dich auf" (aktiv, nicht statisch)
+              * Coaching: Ausrichtung ("Knie über Knöchel"), Atmung ("Mit Atem fließen"), Kraft/Grounding
+              * Bei Savasana/Meditation: cues leer lassen — respektiere die Stille.
+            TIMING & FLOW:
             - Die Summe aller (transition_seconds + Sprechzeit + hold_seconds) soll ca. ${durationMinutes * 60} Sekunden ergeben
+            - Warm-Up & Peak: Vinyasa-basiert mit kurzen Übergängen (transition_seconds meist 0-2s)
+            - Cool-Down: Langsamer, länger, fließend (längere Holds, aber auch fließend sequenziert)
+            - Restorative: Längere Holds (60-90s), weniger cues, sehr beruhigend
             - Schließe mit Savasana ab (mindestens 3 Minuten, keine cues — nur Stille)
         """.trimIndent()
 
