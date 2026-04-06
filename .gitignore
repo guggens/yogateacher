@@ -4,3 +4,4 @@ build/
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
 .env
+application-local.properties

@@ -1,3 +1,5 @@
+package com.yogateacher
+
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import kotlinx.serialization.Serializable
@@ -48,13 +50,13 @@ class GoogleTtsService(@param:Value("\${GOOGLE_TTS_API_KEY}") private val apiKey
                 input = TextInput(text),
                 voice = VoiceSelectionParams(
                     languageCode = "de-DE",
-                    name = "de-DE-Wavenet-C",
+                    name = "de-DE-Chirp3-HD-Erinome",
                     ssmlGender = "FEMALE",
                 ),
                 audioConfig = AudioConfig(
                     audioEncoding = "LINEAR16",
-                    speakingRate = 0.9,
-                    pitch = -1.0,
+                    speakingRate = 0.8,
+                    pitch = 0.0,
                 ),
             )
         )

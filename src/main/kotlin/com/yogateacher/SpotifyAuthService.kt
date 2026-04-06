@@ -1,20 +1,18 @@
+package com.yogateacher
+
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
-import com.sun.net.httpserver.HttpServer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.awt.Desktop
-import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
-import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Base64
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -37,7 +35,7 @@ class SpotifyAuthService(
     @param:Value("\${SPOTIFY_CLIENT_SECRET:}") private val clientSecret: String,
 ) {
     val isConfigured: Boolean get() = clientId.isNotBlank() && clientSecret.isNotBlank()
-    private val redirectUri = "http://localhost:8888/callback"
+    private val redirectUri = "http://127.0.0.1:8888/callback"
     private val scopes = "user-read-playback-state user-modify-playback-state"
 
     fun getAccessToken(): String {
@@ -50,22 +48,6 @@ class SpotifyAuthService(
     }
 
     private fun authorizeAndFetchTokens(): String {
-        val latch = CountDownLatch(1)
-        var authCode: String? = null
-
-        val server = HttpServer.create(InetSocketAddress(8888), 0)
-        server.createContext("/callback") { exchange ->
-            val query = exchange.requestURI.query.orEmpty()
-            authCode = query.split("&")
-                .firstOrNull { it.startsWith("code=") }
-                ?.removePrefix("code=")
-            val html = "<html><body><h2>✅ Spotify verbunden! Du kannst dieses Fenster schließen.</h2></body></html>"
-            exchange.sendResponseHeaders(200, html.length.toLong())
-            exchange.responseBody.use { it.write(html.toByteArray()) }
-            latch.countDown()
-        }
-        server.start()
-
         val authUrl = "https://accounts.spotify.com/authorize?" +
             "client_id=$clientId" +
             "&response_type=code" +
@@ -79,10 +61,19 @@ class SpotifyAuthService(
             println("Öffne manuell: $authUrl")
         }
 
-        check(latch.await(120, TimeUnit.SECONDS)) { "Spotify-Anmeldung abgelaufen (120s Timeout)" }
-        server.stop(0)
-
-        val code = checkNotNull(authCode) { "Kein Autorisierungscode erhalten" }
+        val code = ServerSocket(8888).use { server ->
+            server.soTimeout = 120_000
+            server.accept().use { socket ->
+                val request = socket.getInputStream().bufferedReader().readLine() ?: ""
+                val responseBody = "<html><body><h2>Spotify verbunden! Dieses Fenster kann geschlossen werden.</h2></body></html>"
+                socket.getOutputStream().write(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: ${responseBody.length}\r\nConnection: close\r\n\r\n$responseBody".toByteArray()
+                )
+                // parse code from "GET /callback?code=XXX HTTP/1.1"
+                Regex("code=([^& ]+)").find(request)?.groupValues?.get(1)
+                    ?: error("Kein Autorisierungscode in der Antwort gefunden")
+            }
+        }
         return exchangeCodeForTokens(code)
     }
 

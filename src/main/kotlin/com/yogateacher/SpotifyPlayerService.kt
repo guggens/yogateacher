@@ -1,6 +1,8 @@
+package com.yogateacher
+
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -13,6 +15,16 @@ import java.net.http.HttpResponse
 private val json = Json { ignoreUnknownKeys = true }
 private val client = HttpClient.newHttpClient()
 
+private val PHASE_QUERIES = mapOf(
+    "opening"     to "yoga morning meditation",
+    "warm_up"     to "yoga warm up flow",
+    "standing"    to "yoga vinyasa flow",
+    "peak"        to "yoga power flow",
+    "cool_down"   to "yoga cool down",
+    "restorative" to "yin yoga",
+    "savasana"    to "yoga savasana meditation",
+)
+
 @Serializable
 private data class Device(val id: String, val name: String, val is_active: Boolean)
 
@@ -21,26 +33,54 @@ private data class DevicesResponse(val devices: List<Device>)
 
 class SpotifyPlayerService(private val accessToken: String) {
 
+    private var cachedDeviceId: String? = null
+
     fun startYogaPlaylist() {
-        val playlistUri = searchYogaPlaylist()
-        val deviceId = getActiveDevice()
-        startPlayback(playlistUri, deviceId)
+        val playlistUri = searchPlaylist(PHASE_QUERIES["opening"] ?: "yoga meditation entspannung") ?: return
+        cachedDeviceId = getActiveDevice()
+        startPlayback(playlistUri, cachedDeviceId)
     }
 
-    private fun searchYogaPlaylist(): String {
-        val query = URLEncoder.encode("yoga meditation entspannung", Charsets.UTF_8)
-        val request = buildGetRequest("https://api.spotify.com/v1/search?q=$query&type=playlist&limit=1&market=DE")
+    fun prefetchPhasePlaylists(phases: Set<String>): Map<String, String> {
+        cachedDeviceId = getActiveDevice()
+        val cache = mutableMapOf<String, String>()
+        for (phase in phases) {
+            val query = PHASE_QUERIES[phase] ?: "yoga meditation entspannung"
+            val uri = searchPlaylist(query)
+            if (uri != null) {
+                cache[phase] = uri
+            } else {
+                println("⚠️  Keine Playlist für Phase '$phase' gefunden, übersprungen.")
+            }
+        }
+        return cache
+    }
+
+    fun switchToPhase(phase: String, cache: Map<String, String>) {
+        val uri = cache[phase] ?: return
+        val deviceId = cachedDeviceId ?: getActiveDevice().also { cachedDeviceId = it }
+        startPlayback(uri, deviceId)
+    }
+
+    private fun searchPlaylist(query: String): String? {
+        val encoded = URLEncoder.encode(query, Charsets.UTF_8)
+        val request = buildGetRequest("https://api.spotify.com/v1/search?q=$encoded&type=playlist&limit=1&market=DE")
         val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-        check(response.statusCode() == 200) { "Spotify Suche fehlgeschlagen ${response.statusCode()}: ${response.body()}" }
+        if (response.statusCode() != 200) return null
 
-        val body = json.parseToJsonElement(response.body()).jsonObject
-        val playlist = body["playlists"]!!.jsonObject["items"]!!.jsonArray.firstOrNull()?.jsonObject
-            ?: error("Keine Yoga-Playlist gefunden")
-
-        val name = playlist["name"]!!.jsonPrimitive.content
-        val uri = playlist["uri"]!!.jsonPrimitive.content
-        println("🎵 Playlist gefunden: $name")
-        return uri
+        return try {
+            val body = json.parseToJsonElement(response.body()).jsonObject
+            val playlistsEl = body["playlists"]?.takeIf { it !is JsonNull } ?: return null
+            val playlist = playlistsEl.jsonObject["items"]?.takeIf { it !is JsonNull }
+                ?.jsonArray?.firstOrNull()?.takeIf { it !is JsonNull }?.jsonObject ?: return null
+            val name = playlist["name"]!!.jsonPrimitive.content
+            val uri = playlist["uri"]!!.jsonPrimitive.content
+            println("🎵 Playlist gefunden: $name")
+            uri
+        } catch (e: Exception) {
+            System.err.println("Spotify-Suche fehlgeschlagen ('$query'): ${e.message}")
+            null
+        }
     }
 
     private fun getActiveDevice(): String? {
