@@ -25,7 +25,7 @@ class YogaTeacherRunner(
     private var spotifyPlayer: SpotifyPlayerService? = null
 
     override fun run(vararg args: String?) {
-        println("🧘 Yoga Teacher — deutsche Stimme bereit (de-DE-Wavenet-C)")
+        println("🧘 Yoga Teacher — deutsche Stimme bereit (de-DE-Chirp3-HD)")
 
         if (spotifyAuth.isConfigured) {
             try {
