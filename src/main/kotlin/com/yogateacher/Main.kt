@@ -144,16 +144,16 @@ class YogaTeacherRunner(
         var currentPhase: String? = null
         for (segment in lesson.segments) {
             if (textOnly) {
-                printSegment(segment)
+                printFlowSegment(segment)
             } else {
-                playSegment(segment, currentPhase, cache)
+                playFlowSegment(segment, currentPhase, cache)
                 currentPhase = segment.phase
             }
         }
         println("\n🙏 Stunde beendet.")
     }
 
-    private fun playSegment(segment: LessonSegment, previousPhase: String?, cache: Map<String, String>) {
+    private fun playFlowSegment(segment: FlowSegment, previousPhase: String?, cache: Map<String, String>) {
         val phaseChanged = segment.phase != previousPhase && spotifyPlayer != null && cache.isNotEmpty()
 
         // 1. Capture current volume and duck before playlist switch
@@ -163,7 +163,7 @@ class YogaTeacherRunner(
             spotifyPlayer!!.setVolume(30)
         }
 
-        // 2. First half of transition — current music continues (ducked) while moving
+        // 2. First half of transition
         if (segment.transition_seconds > 0) {
             Thread.sleep(segment.transition_seconds * 500L)
         }
@@ -177,7 +177,7 @@ class YogaTeacherRunner(
             }
         }
 
-        // 4. Second half of transition — new music plays while settling into position
+        // 4. Second half of transition
         if (segment.transition_seconds > 0) {
             Thread.sleep(segment.transition_seconds * 500L)
         }
@@ -187,45 +187,73 @@ class YogaTeacherRunner(
             spotifyPlayer!!.setVolume(previousVolume)
         }
 
-        // 6. Main instruction
-        speakInstruction(segment.instruction)
-
-        // 7. Modification for difficult poses
+        // 6. Modification announced once before the flow
         if (segment.modification.isNotBlank()) {
             speakInstruction(segment.modification)
         }
 
-        // 8. Coaching cues evenly spaced during hold, or silent hold if no cues
-        if (segment.hold_seconds > 0) {
-            if (segment.cues.isNotEmpty()) {
-                val intervalMs = (segment.hold_seconds * 1000L) / (segment.cues.size + 1)
-                for (cue in segment.cues) {
-                    Thread.sleep(intervalMs)
-                    speakInstruction(cue)
+        // 7. Execute flow, possibly repeated (bilateral or multi-round)
+        for (round in 1..segment.repeat) {
+            if (round > 1 && segment.repeat_cue.isNotBlank()) {
+                speakInstruction(segment.repeat_cue)
+                Thread.sleep(segment.transition_seconds * 1000L)
+            }
+
+            // Play each step in the flow
+            for (step in segment.steps) {
+                speakInstruction(step.instruction)
+
+                if (step.hold_seconds > 0) {
+                    if (step.cues.isNotEmpty()) {
+                        val intervalMs = (step.hold_seconds * 1000L) / (step.cues.size + 1)
+                        for (cue in step.cues) {
+                            Thread.sleep(intervalMs)
+                            speakInstruction(cue)
+                        }
+                        Thread.sleep(intervalMs)
+                    } else {
+                        Thread.sleep(step.hold_seconds * 1000L)
+                    }
                 }
-                Thread.sleep(intervalMs)
-            } else {
-                Thread.sleep(segment.hold_seconds * 1000L)
+            }
+
+            // Release after all steps in this round
+            if (segment.release.isNotBlank()) {
+                speakInstruction(segment.release)
+            }
+            if (segment.release_hold_seconds > 0) {
+                Thread.sleep(segment.release_hold_seconds * 1000L)
             }
         }
     }
 
-    private fun printSegment(segment: LessonSegment) {
+    private fun printFlowSegment(segment: FlowSegment) {
+        val repeatInfo = if (segment.repeat > 1) " ×${segment.repeat}" else ""
+        println("[${segment.phase}] ${segment.name}${repeatInfo}")
         if (segment.transition_seconds > 0) {
-            println("[${segment.phase}] ⏳ ${segment.transition_seconds}s Übergang")
-        } else {
-            println("[${segment.phase}]")
+            println("  ⏳ ${segment.transition_seconds}s Übergang")
         }
-        println(segment.instruction)
         if (segment.modification.isNotBlank()) {
             println("  💡 ${segment.modification}")
         }
-        for ((i, cue) in segment.cues.withIndex()) {
-            val atSeconds = (segment.hold_seconds * (i + 1)) / (segment.cues.size + 1)
-            println("  📌 \"$cue\" (nach ${atSeconds}s)")
+        if (segment.repeat > 1 && segment.repeat_cue.isNotBlank()) {
+            println("  🔄 ${segment.repeat_cue}")
         }
-        if (segment.hold_seconds > 0) {
-            println("  ⏱ ${segment.hold_seconds}s Halten")
+        for ((stepIdx, step) in segment.steps.withIndex()) {
+            println("  ${stepIdx + 1}. ${step.instruction}")
+            for ((i, cue) in step.cues.withIndex()) {
+                val atSeconds = (step.hold_seconds * (i + 1)) / (step.cues.size + 1)
+                println("     📌 \"$cue\" (nach ${atSeconds}s)")
+            }
+            if (step.hold_seconds > 0) {
+                println("     ⏱ ${step.hold_seconds}s")
+            }
+        }
+        if (segment.release.isNotBlank()) {
+            println("  🔚 ${segment.release}")
+            if (segment.release_hold_seconds > 0) {
+                println("     ⏱ ${segment.release_hold_seconds}s")
+            }
         }
         println()
     }
