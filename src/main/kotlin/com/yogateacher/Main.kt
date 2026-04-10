@@ -150,6 +150,16 @@ class YogaTeacherRunner(
                 currentPhase = segment.phase
             }
         }
+        // Closing fallback: ensure Namaste is always spoken/printed
+        val lastRelease = lesson.segments.lastOrNull()?.release ?: ""
+        if (!lastRelease.contains("Namaste", ignoreCase = true)) {
+            val closing = "Danke an deinen Körper für diese Praxis. Danke an dich selbst, dass du dir diese Zeit geschenkt hast. Hände vor dem Herzen. Namaste."
+            if (textOnly) {
+                println("  🙏 $closing")
+            } else {
+                speakInstruction(closing)
+            }
+        }
         println("\n🙏 Stunde beendet.")
     }
 
@@ -187,10 +197,8 @@ class YogaTeacherRunner(
             spotifyPlayer!!.setVolume(previousVolume)
         }
 
-        // 6. Modification announced once before the flow
-        if (segment.modification.isNotBlank()) {
-            speakInstruction(segment.modification)
-        }
+        // 6. Announce flow name
+        speakInstruction(segment.name)
 
         // 7. Execute flow, possibly repeated (bilateral or multi-round)
         for (round in 1..segment.repeat) {
@@ -199,8 +207,10 @@ class YogaTeacherRunner(
                 Thread.sleep(segment.transition_seconds * 1000L)
             }
 
-            // Play each step in the flow
-            for (step in segment.steps) {
+            // Play each step — use abbreviated steps for rounds 2+ when available
+            val stepsForRound = if (round > 1 && segment.steps_round2.isNotEmpty())
+                segment.steps_round2 else segment.steps
+            for (step in stepsForRound) {
                 speakInstruction(step.instruction)
 
                 if (step.hold_seconds > 0) {
@@ -247,6 +257,19 @@ class YogaTeacherRunner(
             }
             if (step.hold_seconds > 0) {
                 println("     ⏱ ${step.hold_seconds}s")
+            }
+        }
+        if (segment.steps_round2.isNotEmpty()) {
+            println("  --- Runde 2+ (verkürzt) ---")
+            for ((stepIdx, step) in segment.steps_round2.withIndex()) {
+                println("  ${stepIdx + 1}. ${step.instruction}")
+                for ((i, cue) in step.cues.withIndex()) {
+                    val atSeconds = (step.hold_seconds * (i + 1)) / (step.cues.size + 1)
+                    println("     📌 \"$cue\" (nach ${atSeconds}s)")
+                }
+                if (step.hold_seconds > 0) {
+                    println("     ⏱ ${step.hold_seconds}s")
+                }
             }
         }
         if (segment.release.isNotBlank()) {
